@@ -323,11 +323,12 @@ class PointNetImaginationExtractorGP(BaseFeaturesExtractor):
     def __init__(self, observation_space: gym.spaces.Dict, pc_key: str, feat_key: Optional[str] = None,
                  out_channel=256, extractor_name="smallpn",
                  gt_key: Optional[str] = None, imagination_keys=("imagination_robot",), state_key="state",
-                 state_mlp_size=(64, 64), state_mlp_activation_fn=nn.ReLU, *kwargs):
+                 state_mlp_size=(64, 64), state_mlp_activation_fn=nn.ReLU, origin_state=False, *kwargs):
         self.imagination_key = imagination_keys
         # Init state representation
         self.use_state = state_key is not None
         self.state_key = state_key
+        self.origin_state = origin_state
 
         print(f"extractor use state = {self.use_state}")
         if self.use_state:
@@ -373,10 +374,13 @@ class PointNetImaginationExtractorGP(BaseFeaturesExtractor):
             else:
                 net_arch = state_mlp_size[:-1]
             output_dim = state_mlp_size[-1]
-
-            self.n_output_channels = out_channel + output_dim
+            
+            if self.origin_state:
+                self.n_output_channels = out_channel + self.state_dim
+            else:
+                self.n_output_channels = out_channel + output_dim
+                self.state_mlp = nn.Sequential(*create_mlp(self.state_dim, output_dim, net_arch, state_mlp_activation_fn))
             self._features_dim = self.n_output_channels
-            self.state_mlp = nn.Sequential(*create_mlp(self.state_dim, output_dim, net_arch, state_mlp_activation_fn))
 
     def forward(self, observations: TensorDict) -> th.Tensor:
         # get raw point cloud segmentation mask
@@ -394,8 +398,10 @@ class PointNetImaginationExtractorGP(BaseFeaturesExtractor):
         # points: B * 3 * (N + sum(Ni))
         pn_feat = self.extractor(points)    # B * 256
         if self.use_state:
-            state_feat = self.state_mlp(observations[self.state_key])
-            return torch.cat([pn_feat, state_feat], dim=-1)
+            if not self.origin_state:
+                state_feat = self.state_mlp(observations[self.state_key])
+                return torch.cat([pn_feat, state_feat], dim=-1)
+            return torch.cat([pn_feat, observations[self.state_key]], dim=-1)
         else:
             return pn_feat
 

@@ -7,7 +7,7 @@ import transforms3d
 from dexart.env.sim_env.base import BaseSimulationEnv
 from dexart.env.task_setting import TASK_CONFIG
 import json
-
+from PIL import Image
 
 class LaptopEnv(BaseSimulationEnv):
     def __init__(self, use_gui=True, frame_skip=5, friction=5, iter=0, **renderer_kwargs):
@@ -19,6 +19,7 @@ class LaptopEnv(BaseSimulationEnv):
         self.handle2link_relative_pose = None
         self.scale_path = None
         self.iter = iter
+        self.render_step = 0
         # Construct scene
         scene_config = sapien.SceneConfig()
         self.scene = self.engine.create_scene(config=scene_config)
@@ -178,3 +179,18 @@ class LaptopEnv(BaseSimulationEnv):
     def get_handle_global_pose(self):
         better_global_pose = self.handle_link.get_pose().transform(self.handle2link_relative_pose_dict[self.index])
         return better_global_pose
+
+
+    def render(self, mode="human"):
+        # assert self.use_gui
+        if mode == 'human':
+            self.scene.update_render()
+            self.cameras['laptop_viz'].take_picture()
+            rgba_laptop = self.cameras['laptop_viz'].get_float_texture('Color')
+            rgba_laptop_img = (rgba_laptop * 255).clip(0, 255).astype("uint8")
+            rgba_laptop_pil = Image.fromarray(rgba_laptop_img)
+            # rgba_laptop_pil.save(f'/home/luoyu/Workspace/zhengkx/dexart-release/render/laptop_{self.render_step}.png')
+            self.render_step += 1
+            return rgba_laptop_img
+        else:
+            raise NotImplementedError

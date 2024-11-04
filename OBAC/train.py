@@ -13,7 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 # from dm_control import suite
 # from envs.meta_world_env import make_env
 # import robohive
-
+import wandb
 
 def evaluation(agent, env, total_numsteps, writer, best_reward, video_path=None, config=None):
     avg_reward = 0.
@@ -30,7 +30,7 @@ def evaluation(agent, env, total_numsteps, writer, best_reward, video_path=None,
         # state = state.detach().cpu().numpy()
 
         if eval_recoder is not None:
-            eval_recoder.record(env.render())
+            eval_recoder.record(env.render()[0][:,:,:3])
         episode_reward = 0
         done = False
         while not done:
@@ -39,19 +39,17 @@ def evaluation(agent, env, total_numsteps, writer, best_reward, video_path=None,
             next_obs, reward, done, info = env.step(action) # Step
             done, reward, info = done[0], reward[0], info[0]
             if eval_recoder is not None:
-                eval_recoder.record(env.render())
+                eval_recoder.record(env.render()[0][:,:,:3])
             episode_reward += reward
-            if done and info.get("TimeLimit.truncated"):
-                done = False
+            # if done and info.get("TimeLimit.truncated"):
+            #     done = False
             next_state = agent.extract_features(next_obs).detach().cpu().numpy()
             # next_state, _ = agent.get_latent(next_obs)
             # next_state = next_state.detach().cpu().numpy()
             state = next_state
+            success = info['is_eval_done']
         avg_reward += episode_reward
-        if 'solved' in info.keys():
-            avg_success += float(info['solved'])
-        elif 'success' in info.keys():
-            avg_success += float(info['success'])
+        avg_success += float(success)
     avg_reward /= config.eval_times
     avg_success /= config.eval_times
 
@@ -60,26 +58,38 @@ def evaluation(agent, env, total_numsteps, writer, best_reward, video_path=None,
 
     writer.add_scalar('test/avg_reward', avg_reward, total_numsteps)
     writer.add_scalar('test/avg_success', avg_success, total_numsteps)
-
+    wandb.log({
+        'test/avg_reward': avg_reward,
+        'test/avg_success': avg_success,
+    })
     print("----------------------------------------")
     print("Test Episodes: {}, Avg. Reward: {}, Avg. Success: {}".format(config.eval_times, round(avg_reward, 2), round(avg_success, 2)))
     print("----------------------------------------")
+    print()
     
     return avg_reward
 
-def train_loop(env, policy_kwargs, config, msg = "default", task='default', pretrain_path=None, freeze_encoder=False):
+def train_loop(env, policy_kwargs, config, msg = "default", task='default', pretrain_path=None, freeze_encoder=True, eval_env=None):
     # set seed
     # env = gym.make(config.env_name)
     # env = make_env(config)
     # env.seed(config.seed)
-    
+    wandb.init(
+        project='dexart', 
+        entity='1155173723',
+        name=task,
+        config=config
+    )
+    if eval_env == None:
+        eval_env = env
+    eval_env.action_space.seed(config.seed)
     env.action_space.seed(config.seed)
     torch.manual_seed(config.seed)
     np.random.seed(config.seed)
 
     # Agent
     # agent = OBAC(env.observation_space.shape[0], env.action_space, policy_kwargs, config)
-    agent = OBAC(env, env.action_space, policy_kwargs, config)
+    agent = OBAC(env, env.action_space, freeze_encoder, policy_kwargs, config)
     # import ipdb; ipdb.set_trace()
     if pretrain_path is not None:
         state_dict = torch.load(pretrain_path)
@@ -116,6 +126,7 @@ def train_loop(env, policy_kwargs, config, msg = "default", task='default', pret
     total_numsteps = 0
     updates = 0
     best_reward = -1e6
+    sum_success = 0
     for i_episode in itertools.count(1):
         episode_reward = 0
         episode_steps = 0
@@ -147,40 +158,64 @@ def train_loop(env, policy_kwargs, config, msg = "default", task='default', pret
                     writer.add_scalar('parameter/q_current_pi', q_pi, updates)
                     writer.add_scalar('parameter/q_behavior_pi', q_behavior_pi, updates)
                     writer.add_scalar('parameter/q_diff', q_pi - q_behavior_pi, updates)
+                    wandb.log({
+                        'loss/critic_1': critic_1_loss,
+                        'loss/critic_2': critic_2_loss,
+                        'loss/offline_value': value_loss,
+                        'loss/policy': policy_loss,
+                        'loss/entropy_loss': ent_loss,
+                        'parameter/alpha': alpha,
+                        'parameter/q_current_pi': q_pi,
+                        'parameter/q_behavior_pi': q_behavior_pi,
+                        'parameter/q_diff': q_pi - q_behavior_pi,
+                        # 'updates': updates
+                    },
+                    step=updates)
                     updates += 1
             next_obs, reward, done, info = env.step(action) # Step
             done, info = done[0], info[0]
-            if done and info.get("TimeLimit.truncated"):
-                done = False
+            # if done and info.get("TimeLimit.truncated"):
+            #     done = False
             next_state = agent.extract_features(next_obs).detach().cpu().numpy()
             # next_state_pi, _ = agent.get_latent(next_obs)
             # state_pi = next_state_pi.detach().cpu().numpy()
             episode_steps += 1
             total_numsteps += 1
             episode_reward += reward[0]
+            success = info['early_done']
+            sum_success += float(success)
 
             # Ignore the "done" signal if it comes from hitting the time horizon.
             # (https://github.com/openai/spinningup/blob/master/spinup/algos/sac/sac.py)
             mask = 1 if episode_steps == 250 else float(not done)
-            memory.push(state, action[0], reward[0], next_state, mask) # Append transition to memory
+            if freeze_encoder:
+                memory.push(state, action[0], reward[0], next_state, mask) # Append transition to memory
+            else:
+                memory.push(obs, action[0], reward[0], next_obs, mask) # Append transition to memory
             state = next_state
-            # memory.push(obs, action[0], reward[0], next_obs, mask) # Append transition to memory
 
             # test agent
             if total_numsteps % config.eval_numsteps == 0 and config.eval is True:
-                video_path = None
-                avg_reward = evaluation(agent, env, total_numsteps, writer, best_reward, video_path, config)
+                # video_path = None
+                avg_reward = evaluation(agent, eval_env, total_numsteps, writer, best_reward, video_path, config)
                 if avg_reward >= best_reward and config.save is True:
                     best_reward = avg_reward
                     agent.save_checkpoint(checkpoint_path, 'best')
+            if (i_episode >= 100) and (i_episode % 100 == 0):
+                agent.save_checkpoint(checkpoint_path, f'{i_episode}')
+        writer.add_scalar('train/reward', episode_reward, total_numsteps)
+        writer.add_scalar('train/sum_success', sum_success, total_numsteps)
+        wandb.log({
+            'train/reward': episode_reward,
+            'train/sum_success': sum_success,},
+            step=total_numsteps  
+        )
+        print("Episode: {}, total numsteps: {}, episode steps: {}, reward: {}, sum_success: {}".format(i_episode, total_numsteps, episode_steps, round(episode_reward, 2), sum_success))
+        print()
 
         if total_numsteps > config.num_steps:
             break
-        
-        if i_episode % 1 == 0:
-            writer.add_scalar('train/reward', episode_reward, total_numsteps)
-            print("Episode: {}, total numsteps: {}, episode steps: {}, reward: {}".format(i_episode, total_numsteps, episode_steps, round(episode_reward, 2)))
-            print()
+            
     env.close() 
 
     

@@ -1,7 +1,7 @@
 from functools import cached_property
 from pathlib import Path
 from typing import Optional, List, Dict, Sequence, Union
-
+from PIL import Image
 import numpy as np
 import sapien.core as sapien
 import transforms3d.quaternions

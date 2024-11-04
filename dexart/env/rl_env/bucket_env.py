@@ -192,8 +192,11 @@ class BucketRLEnv(BucketEnv, BaseRLEnv):
             return len(self.get_robot_state())
 
     def is_done(self):
-        return (self.current_step >= self.horizon)  # or self.early_done
+        return (self.current_step >= self.horizon) or self.early_done
 
     @cached_property
     def horizon(self):
         return 250
+    
+    def early_done(self):
+        return self.early_done

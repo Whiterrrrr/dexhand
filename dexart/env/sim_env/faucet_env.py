@@ -5,6 +5,7 @@ import transforms3d
 from dexart.env.sim_env.base import BaseSimulationEnv
 from dexart.env.task_setting import TASK_CONFIG
 import json
+from PIL import Image
 
 
 class FaucetEnv(BaseSimulationEnv):
@@ -15,6 +16,7 @@ class FaucetEnv(BaseSimulationEnv):
 
         self.scale_path = None
         self.iter = iter
+        self.render_step = 0
         # Construct scene
         scene_config = sapien.SceneConfig()
         self.scene = self.engine.create_scene(config=scene_config)
@@ -117,3 +119,17 @@ class FaucetEnv(BaseSimulationEnv):
         orn = transforms3d.euler.euler2quat(0, 0, 0)
         self.instance.set_root_pose(sapien.Pose(pos, orn))
         self.instance.set_qpos(np.zeros(self.instance.dof))
+        
+    def render(self, mode="human"):
+        # assert self.use_gui
+        if mode == 'human':
+            self.scene.update_render()
+            self.cameras['faucet_viz'].take_picture()
+            rgba = self.cameras['faucet_viz'].get_float_texture('Color')
+            rgba_img = (rgba * 255).clip(0, 255).astype("uint8")
+            rgba_pil = Image.fromarray(rgba_img)
+            # rgba_pil.save(f'/home/luoyu/Workspace/zhengkx/dexart-release/results/faucet/LFP/default/2024-10-16_23-23-13_Gaussian_0_autotune/render/faucet_{self.render_step}.png')
+            self.render_step += 1
+            return rgba_img
+        else:
+            raise NotImplementedError
