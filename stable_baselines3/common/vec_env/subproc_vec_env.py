@@ -27,9 +27,13 @@ def _worker(
             cmd, data = remote.recv()
             if cmd == "step":
                 observation, reward, done, info = env.step(data)
+                info["early_done"] = False
+                info["is_eval_done"] = False
                 if done:
                     # save final observation where user can get it, then reset
                     info["terminal_observation"] = observation
+                    info["early_done"] = env.early_done
+                    info["is_eval_done"] = env.is_eval_done
                     observation = env.reset()
                 remote.send((observation, reward, done, info))
             elif cmd == "seed":
