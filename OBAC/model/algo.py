@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 from torch.optim import Adam
 import copy
+import numpy as np
 from .utils import soft_update, hard_update
 from .model import GaussianPolicy, QNetwork, DeterministicPolicy, ValueNetwork
 from stable_baselines3.common.preprocessing import preprocess_obs
@@ -10,7 +11,6 @@ from stable_baselines3.common.torch_layers import (
     MlpExtractor,
     NatureCNN,
 )
-import numpy as np
 from stable_baselines3.common.utils import obs_as_tensor
 
 LOG_SIG_MAX = 2
@@ -18,17 +18,16 @@ LOG_SIG_MIN = -20
 
 
 class OBAC(object):
-    def __init__(self, env, action_space, freeze_encoder, policy_kwargs,args):
+    def __init__(self, env, action_space, policy_kwargs,args):
         self.gamma = args.gamma
         self.tau = args.tau
         self.alpha = args.alpha
         self.quantile = args.quantile
         self.bc_weight = args.bc_weight
-        self.freeze_encoder = freeze_encoder
         self.device = torch.device("cuda:{}".format(str(args.device)) if args.cuda else "cpu")
         self.features_extractor = policy_kwargs['features_extractor_class'](env.observation_space, **policy_kwargs['features_extractor_kwargs']).to(self.device)
-        self.features_dim = self.features_extractor.features_dim
-        # self.features_dim = 320
+        # self.features_dim = self.features_extractor.features_dim
+        self.features_dim = 320
         self.policy_type = args.policy
         self.target_update_interval = args.target_update_interval
         self.automatic_entropy_tuning = args.automatic_entropy_tuning
@@ -92,14 +91,9 @@ class OBAC(object):
         # next_obs_batch = self.extract_features_batch(next_obs_batch).detach()
         # state_pi_batch = torch.FloatTensor(state_pi_batch).to(self.device)
         # state_value_batch = torch.FloatTensor(state_value_batch).to(self.device)
-        if not self.freeze_encoder:
-            obs_batch = self.batch2dict(obs_batch)
-            next_obs_batch = self.batch2dict(next_obs_batch)
-            obs_batch = self.extract_features(obs_batch)
-            next_obs_batch = self.extract_features(next_obs_batch)
-        else:
-            obs_batch = torch.FloatTensor(obs_batch).to(self.device).squeeze()
-            next_obs_batch = torch.FloatTensor(next_obs_batch).to(self.device).squeeze()
+        # self.batch2dict(obs_batch)
+        obs_batch = torch.FloatTensor(obs_batch).to(self.device).squeeze()
+        next_obs_batch = torch.FloatTensor(next_obs_batch).to(self.device).squeeze()
         action_batch = torch.FloatTensor(action_batch).to(self.device).squeeze()
         reward_batch = torch.FloatTensor(reward_batch).to(self.device).unsqueeze(1)
         mask_batch = torch.FloatTensor(mask_batch).to(self.device).unsqueeze(1)
@@ -118,19 +112,19 @@ class OBAC(object):
         qf_loss = qf1_loss + qf2_loss
         
         # Compute the target Q value for behavior policy
-        vf_pred = self.V_critic_buffer(obs_batch.detach())
-        target_Vf_pred = self.V_critic_buffer(next_obs_batch.detach())
+        vf_pred = self.V_critic_buffer(obs_batch)
+        target_Vf_pred = self.V_critic_buffer(next_obs_batch)
         next_q_value_buffer = reward_batch + mask_batch * self.gamma * target_Vf_pred
         
         # compute the Q loss for behavior policy
-        qf1_buffer, qf2_buffer = self.critic_buffer(obs_batch.detach(), action_batch)
+        qf1_buffer, qf2_buffer = self.critic_buffer(obs_batch, action_batch)
         qf_buffer = torch.min(qf1_buffer, qf2_buffer).mean()   # compute the Q value for (s,a) pair under the behavior policy
         qf1_buffer_loss = F.mse_loss(qf1_buffer, next_q_value_buffer)  
         qf2_buffer_loss = F.mse_loss(qf2_buffer, next_q_value_buffer)
         qf_buffer_loss = qf1_buffer_loss + qf2_buffer_loss
         
         # compute the V loss for behavior policy
-        q_pred_1, q_pred_2 = self.critic_target_buffer(obs_batch.detach(), action_batch)
+        q_pred_1, q_pred_2 = self.critic_target_buffer(obs_batch, action_batch)
         q_pred = torch.min(q_pred_1, q_pred_2)
         vf_err = q_pred - vf_pred
         vf_sign = (vf_err < 0).float()
@@ -138,9 +132,9 @@ class OBAC(object):
         vf_loss = (vf_weight * (vf_err ** 2)).mean()
         
         # compute action by current policy
-        pi, log_pi, _ = self.policy.sample(obs_batch.detach())
+        pi, log_pi, _ = self.policy.sample(obs_batch)
         # estimate the Q value 
-        qf1_pi, qf2_pi = self.critic(obs_batch.detach(), pi)
+        qf1_pi, qf2_pi = self.critic(obs_batch, pi)
         min_qf_pi = torch.min(qf1_pi, qf2_pi) # compute the Q value for (s,a) pair under the current policy
         qf_pi = min_qf_pi.mean()
         
@@ -148,9 +142,8 @@ class OBAC(object):
             self.policy_loss = torch.zeros(1, requires_grad=True, device=self.device)
             self.alpha_loss = torch.zeros(1, requires_grad=True, device=self.device)
             self.alpha_tlogs = torch.zeros(1, requires_grad=True, device=self.device)
-        
-        # if self.freeze_encoder:  
-            # update Q value of current policy
+            
+        # update Q value of current policy
         self.critic_optim.zero_grad()
         qf_loss.backward()
         self.critic_optim.step()
@@ -173,19 +166,11 @@ class OBAC(object):
                 log_density = torch.clamp(log_density, min=LOG_SIG_MIN, max=LOG_SIG_MAX)
                 policy_loss = (self.alpha * log_pi - self.bc_weight * log_density - min_qf_pi).mean()
             
-            # if self.freeze_encoder:
-                # update policy
+            # update policy
             self.policy_optim.zero_grad()
             policy_loss.backward()
             self.policy_optim.step()
-            # else:
-            #     online_loss = policy_loss + qf_loss
-            #     self.policy_optim.zero_grad()
-            #     self.critic_optim.zero_grad()
-            #     online_loss.backward()
-            #     self.policy_optim.step()
-            #     self.critic_optim.step()
-            
+
             if self.automatic_entropy_tuning:
                 alpha_loss = -(self.log_alpha * (log_pi + self.target_entropy).detach()).mean()
 
@@ -304,7 +289,7 @@ class OBAC(object):
             activation_fn=self.activation_fn,
             device=self.device,
         )
-        
+    
     def batch2dict(self, obs):
         result = {}
         keys = obs[0].keys()

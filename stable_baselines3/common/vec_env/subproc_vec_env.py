@@ -27,13 +27,9 @@ def _worker(
             cmd, data = remote.recv()
             if cmd == "step":
                 observation, reward, done, info = env.step(data)
-                info["early_done"] = False
-                info["is_eval_done"] = False
                 if done:
                     # save final observation where user can get it, then reset
                     info["terminal_observation"] = observation
-                    info["early_done"] = env.early_done
-                    info["is_eval_done"] = env.is_eval_done
                     observation = env.reset()
                 remote.send((observation, reward, done, info))
             elif cmd == "seed":
@@ -41,8 +37,8 @@ def _worker(
             elif cmd == "reset":
                 observation = env.reset()
                 remote.send(observation)
-            # elif cmd == "render":
-                # remote.send(env.render(data))
+            elif cmd == "render":
+                remote.send(env.render(data))
             elif cmd == "close":
                 env.close()
                 remote.close()
@@ -58,15 +54,6 @@ def _worker(
                 remote.send(setattr(env, data[0], data[1]))
             elif cmd == "is_wrapped":
                 remote.send(is_wrapped(env, data))
-            elif cmd == "early_done":
-                early_done = env.early_done
-                remote.send(early_done)
-            elif cmd == "is_eval_done":
-                is_eval_done = env.is_eval_done
-                remote.send(is_eval_done)
-            elif cmd == "render":
-                img = env.render()
-                remote.send(img)
             else:
                 raise NotImplementedError(f"`{cmd}` is not implemented in the worker")
         except EOFError:
@@ -146,19 +133,7 @@ class SubprocVecEnv(VecEnv):
             remote.send(("reset", None))
         obs = [remote.recv() for remote in self.remotes]
         return _flatten_obs(obs, self.observation_space)
-    
-    def early_done(self) -> VecEnvObs:
-        for remote in self.remotes:
-            remote.send(("early_done", None))
-        early_done = [remote.recv() for remote in self.remotes]
-        return np.stack(early_done)
 
-    def is_eval_done(self) -> VecEnvObs:
-        for remote in self.remotes:
-            remote.send(("is_eval_done", None))
-        is_eval_done = [remote.recv() for remote in self.remotes]
-        return np.stack(is_eval_done)
-    
     def close(self) -> None:
         if self.closed:
             return
@@ -178,14 +153,6 @@ class SubprocVecEnv(VecEnv):
             pipe.send(("render", "rgb_array"))
         imgs = [pipe.recv() for pipe in self.remotes]
         return imgs
-
-    def render(self) -> Sequence[np.ndarray]:
-        for pipe in self.remotes:
-            # gather images from subprocesses
-            # `mode` will be taken into account later
-            pipe.send(("render", None))
-        render = [pipe.recv() for pipe in self.remotes]
-        return render
 
     def get_attr(self, attr_name: str, indices: VecEnvIndices = None) -> List[Any]:
         """Return attribute from vectorized environment (see base class)."""

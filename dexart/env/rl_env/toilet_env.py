@@ -167,6 +167,3 @@ class ToiletRLEnv(ToiletEnv, BaseRLEnv):
     @cached_property
     def horizon(self):
         return 250
-    
-    def early_done(self):
-        return self.early_done

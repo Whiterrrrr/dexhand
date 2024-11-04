@@ -11,7 +11,7 @@ _use_gui = None
 _use_ray_tracing = None
 
 
-def get_engine_and_renderer(use_gui=True, use_ray_tracing=False, device="", mipmap_levels=1,
+def get_engine_and_renderer(use_gui=False, use_ray_tracing=False, device="", mipmap_levels=1,
                             need_offscreen_render=False, no_rgb=False, **kwargs):
     global _engine, _renderer
     no_rgb = no_rgb and (not use_gui)
@@ -28,7 +28,6 @@ def get_engine_and_renderer(use_gui=True, use_ray_tracing=False, device="", mipm
 
     _engine = sapien.Engine()
     need_renderer = need_offscreen_render or use_gui
-    use_gui = False
     if use_ray_tracing:
         raise NotImplementedError
     else:
@@ -45,13 +44,6 @@ def get_engine_and_renderer(use_gui=True, use_ray_tracing=False, device="", mipm
             sapien.render_config.camera_shader_dir = "ibl"
             viewer = Viewer(_renderer)
             viewer.close()
-        # else:
-            # _renderer.render()
-            # color_image = _renderer.get_color()
-            # from PIL import Image
-            # img = Image.fromarray(color_image)
-            # img.save('rendered_image.png')
-    
     _engine.set_log_level("error")
     return _engine, _renderer
 
