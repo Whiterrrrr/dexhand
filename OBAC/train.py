@@ -91,7 +91,7 @@ def train_loop(env, policy_kwargs, config, msg = "default", task='default', pret
 
     # Agent
     # agent = OBAC(env.observation_space.shape[0], env.action_space, policy_kwargs, config)
-    agent = OBAC(env, env.action_space, policy_kwargs, config)
+    agent = OBAC(env, env.action_space, freeze_encoder, policy_kwargs, config)
     # import ipdb; ipdb.set_trace()
     if pretrain_path is not None:
         state_dict = torch.load(pretrain_path)
