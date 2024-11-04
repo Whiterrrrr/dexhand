@@ -10,6 +10,7 @@ from OBAC.utilis.video import recorder
 import datetime
 import itertools
 from torch.utils.tensorboard import SummaryWriter
+import wandb
 # from dm_control import suite
 # from envs.meta_world_env import make_env
 # import robohive
@@ -47,11 +48,9 @@ def evaluation(agent, env, total_numsteps, writer, best_reward, video_path=None,
             # next_state, _ = agent.get_latent(next_obs)
             # next_state = next_state.detach().cpu().numpy()
             state = next_state
+            success = info['is_eval_done']
         avg_reward += episode_reward
-        if 'solved' in info.keys():
-            avg_success += float(info['solved'])
-        elif 'success' in info.keys():
-            avg_success += float(info['success'])
+        avg_success += float(success)
     avg_reward /= config.eval_times
     avg_success /= config.eval_times
 
@@ -60,6 +59,10 @@ def evaluation(agent, env, total_numsteps, writer, best_reward, video_path=None,
 
     writer.add_scalar('test/avg_reward', avg_reward, total_numsteps)
     writer.add_scalar('test/avg_success', avg_success, total_numsteps)
+    wandb.log({
+        'test/avg_reward': avg_reward,
+        'test/avg_success': avg_success,
+    })
 
     print("----------------------------------------")
     print("Test Episodes: {}, Avg. Reward: {}, Avg. Success: {}".format(config.eval_times, round(avg_reward, 2), round(avg_success, 2)))
@@ -79,6 +82,12 @@ def train_loop(env, policy_kwargs, config, msg = "default", task='default', pret
     eval_env.action_space.seed(config.seed)
     torch.manual_seed(config.seed)
     np.random.seed(config.seed)
+    wandb.init(
+        project='dexart', 
+        entity='1155173723',
+        name=task,
+        config=config
+    )
 
     # Agent
     # agent = OBAC(env.observation_space.shape[0], env.action_space, policy_kwargs, config)
@@ -119,6 +128,7 @@ def train_loop(env, policy_kwargs, config, msg = "default", task='default', pret
     total_numsteps = 0
     updates = 0
     best_reward = -1e6
+    sum_success = 0
     for i_episode in itertools.count(1):
         episode_reward = 0
         episode_steps = 0
@@ -151,6 +161,20 @@ def train_loop(env, policy_kwargs, config, msg = "default", task='default', pret
                     writer.add_scalar('parameter/q_behavior_pi', q_behavior_pi, updates)
                     writer.add_scalar('parameter/q_diff', q_pi - q_behavior_pi, updates)
                     updates += 1
+                    wandb.log({
+                        'loss/critic_1': critic_1_loss,
+                        'loss/critic_2': critic_2_loss,
+                        'loss/offline_value': value_loss,
+                        'loss/policy': policy_loss,
+                        'loss/entropy_loss': ent_loss,
+                        'parameter/alpha': alpha,
+                        'parameter/q_current_pi': q_pi,
+                        'parameter/q_behavior_pi': q_behavior_pi,
+                        'parameter/q_diff': q_pi - q_behavior_pi,
+                        # 'updates': updates
+                    },
+                    # step=updates
+                )
             next_obs, reward, done, info = env.step(action) # Step
             done, info = done[0], info[0]
             if done and info.get("TimeLimit.truncated"):
@@ -161,6 +185,8 @@ def train_loop(env, policy_kwargs, config, msg = "default", task='default', pret
             episode_steps += 1
             total_numsteps += 1
             episode_reward += reward[0]
+            success = info['early_done']
+            sum_success += float(success)
 
             # Ignore the "done" signal if it comes from hitting the time horizon.
             # (https://github.com/openai/spinningup/blob/master/spinup/algos/sac/sac.py)
@@ -182,6 +208,12 @@ def train_loop(env, policy_kwargs, config, msg = "default", task='default', pret
         
         if i_episode % 1 == 0:
             writer.add_scalar('train/reward', episode_reward, total_numsteps)
+            writer.add_scalar('train/sum_success', sum_success, total_numsteps)
+            wandb.log({
+                'train/reward': episode_reward,
+                'train/sum_success': sum_success,},
+                # step=total_numsteps  
+            )
             print("Episode: {}, total numsteps: {}, episode steps: {}, reward: {}".format(i_episode, total_numsteps, episode_steps, round(episode_reward, 2)))
             print()
     env.close() 
