@@ -67,13 +67,16 @@ def evaluation(agent, env, total_numsteps, writer, best_reward, video_path=None,
     
     return avg_reward
 
-def train_loop(env, policy_kwargs, config, msg = "default", task='default', pretrain_path=None, freeze_encoder=False):
+def train_loop(env, policy_kwargs, config, msg = "default", task='default', pretrain_path=None, freeze_encoder=False, eval_env=None):
     # set seed
     # env = gym.make(config.env_name)
     # env = make_env(config)
     # env.seed(config.seed)
     
     env.action_space.seed(config.seed)
+    if eval_env == None:
+        eval_env = env
+    eval_env.action_space.seed(config.seed)
     torch.manual_seed(config.seed)
     np.random.seed(config.seed)
 
@@ -169,7 +172,7 @@ def train_loop(env, policy_kwargs, config, msg = "default", task='default', pret
             # test agent
             if total_numsteps % config.eval_numsteps == 0 and config.eval is True:
                 video_path = None
-                avg_reward = evaluation(agent, env, total_numsteps, writer, best_reward, video_path, config)
+                avg_reward = evaluation(agent, eval_env, total_numsteps, writer, best_reward, video_path, config)
                 if avg_reward >= best_reward and config.save is True:
                     best_reward = avg_reward
                     agent.save_checkpoint(checkpoint_path, 'best')
