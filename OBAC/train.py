@@ -202,7 +202,8 @@ def train_loop(env, policy_kwargs, config, msg = "default", task='default', pret
                 if avg_reward >= best_reward and config.save is True:
                     best_reward = avg_reward
                     agent.save_checkpoint(checkpoint_path, 'best')
-
+            if (i_episode >= 100) and (i_episode % 100 == 0):
+                agent.save_checkpoint(checkpoint_path, f'{i_episode}')
         if total_numsteps > config.num_steps:
             break
         
